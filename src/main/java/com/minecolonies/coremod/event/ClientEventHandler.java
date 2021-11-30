@@ -380,10 +380,120 @@ public class ClientEventHandler
         }
     }
 
+    // todo: javadoc comment
+    private static void updateBlueprintCache(final IColonyView colony, final ClientWorld world)
+    {
+        final Map<BlockPos, Tuple<Blueprint, AxisAlignedBB>> newCache = new HashMap<>();
+
+        AxisAlignedBB activeBuildingBB = getBlueprintBoundingBoxes(activeBuildingBlueprint, Settings.instance.getPosition());
+        activeBuildingBB = activeBuildingBB.inflate(1);
+        // todo: optimise: This causes a big lag spike for the client when they open the build tool for the first time
+        //  after joining a world because it's loading something (pretty sure it's from loading all the colony's
+        //  building's blueprints). If we could distribute the work load over several frames, it should fix the spike.
+        // Update the building cache by adding buildings that are near the active building and removing buildings that are no longer near
+        for (final IBuildingView buildingView : colony.getBuildings())
+        {
+            if (MinecoloniesAPIProxy.getInstance().getConfig().getClient().neighborbuildingrendering.get())
+            {
+                if (buildingView instanceof PostBox.View || buildingView instanceof EmptyView)
+                {
+                    continue;
+                }
+                final BlockPos currentPosition = buildingView.getPosition();
+
+                // Keep already cached buildings in the cache if they are still near the active building. Cached buildings
+                // will be rendered on this frame.
+                if (blueprintCache.containsKey(currentPosition))
+                {
+                    Tuple<Blueprint, AxisAlignedBB> cachedBuildingData = blueprintCache.get(currentPosition);
+                    assert cachedBuildingData.getB() != null;
+                    if (activeBuildingBB.inflate(PREVIEW_RANGE).intersects(cachedBuildingData.getB()))
+                    {
+                        newCache.put(currentPosition, cachedBuildingData);
+                        continue;
+                    }
+                }
+
+                // Get the structure name and MD5 hash of the building
+                final TileEntity tile = world.getBlockEntity(buildingView.getID());
+                String schematicName = buildingView.getSchematicName();
+                if (tile instanceof IBlueprintDataProvider)
+                {
+                    if (!((IBlueprintDataProvider) tile).getSchematicName().isEmpty())
+                    {
+                        schematicName = ((IBlueprintDataProvider) tile).getSchematicName().replaceAll("\\d$", "");
+                    }
+                }
+                final StructureName sn = new StructureName(Structures.SCHEMATICS_PREFIX,
+                        buildingView.getStyle(),
+                        schematicName + buildingView.getBuildingMaxLevel());
+                final String structureName = sn.toString();
+                final String md5 = Structures.getMD5(structureName);
+
+                // Attempt to retrieve the current building's structure handler from the cache, otherwise create a new
+                // one and update the cache
+                final IStructureHandler wrapper;
+                if (structureHandlerCache.containsKey(buildingView.getID()))
+                {
+                    wrapper = structureHandlerCache.get(buildingView.getID());
+                }
+                else
+                {
+                    wrapper = new LoadOnlyStructureHandler(world, buildingView.getID(), structureName, new PlacementSettings(), true);
+                    structureHandlerCache.put(buildingView.getID(), wrapper);
+                }
+
+                // Validate the structure handler's blueprint. If the data is invalid, request the correct data from the
+                // server and skip rendering for this building for this frame.
+                if (!wrapper.hasBluePrint() || !wrapper.isCorrectMD5(md5))
+                {
+                    structureHandlerCache.remove(buildingView.getID());
+                    if (alreadyRequestedStructures.contains(structureName))
+                    {
+                        continue;
+                    }
+                    alreadyRequestedStructures.add(structureName);
+
+                    Log.getLogger().error("Couldn't find schematic: " + structureName + " requesting to server if possible.");
+                    if (ServerLifecycleHooks.getCurrentServer() == null)
+                    {
+                        Network.getNetwork().sendToServer(new SchematicRequestMessage(structureName));
+                    }
+                    continue;
+                }
+
+                // Calculate the axis-aligned bounding box's starting and ending position after applying rotation and
+                // mirroring to this building
+                final Blueprint blueprint = wrapper.getBluePrint();
+                final Mirror mirror = buildingView.isMirrored() ? Mirror.FRONT_BACK : Mirror.NONE;
+                blueprint.rotateWithMirror(BlockPosUtil.getRotationFromRotations(buildingView.getRotation()), mirror, world);
+                final AxisAlignedBB currentBuildingBB = getBlueprintBoundingBoxes(blueprint, currentPosition);
+
+                blueprint.setRenderSource(buildingView.getID());
+
+                // If the current building is near the active building, add it to the cache. Cached buildings will
+                // be rendered on this frame.
+                if (activeBuildingBB.inflate(PREVIEW_RANGE).intersects(currentBuildingBB))
+                {
+                    if (buildingView.getBuildingLevel() < buildingView.getBuildingMaxLevel())
+                    {
+                        newCache.put(currentPosition, new Tuple<>(blueprint, currentBuildingBB));
+                    }
+                    else
+                    {
+                        newCache.put(currentPosition, new Tuple<>(null, currentBuildingBB));
+                    }
+                }
+            }
+        }
+        blueprintCache = newCache;
+    }
+
+    // todo: fix javadoc comment for box start pos (lower south-west corner? i.e.: minX, minY, minZ? or does it matter?)
     /**
      * Creates an axis-aligned bounding box that encompasses the blueprint
-     * @param blueprint
-     * @param boxStartPos
+     * @param blueprint The blueprint to create an AABB for
+     * @param boxStartPos The (?) corner of the blueprint
      * @return AABB encompassing the blueprint
      */
     private static AxisAlignedBB getBlueprintBoundingBoxes(final Blueprint blueprint, BlockPos boxStartPos)
@@ -415,111 +525,12 @@ public class ClientEventHandler
             return;
         }
 
-        final Map<BlockPos, Tuple<Blueprint, AxisAlignedBB>> newCache = new HashMap<>();
-
         // todo: The building cache shouldn't need to be updated unless the active building's position/rotation changes
+        // fixme: active building blueprint is considered the same even if the position and rotation/mirroring are not the same
         if (activeBuildingBlueprint == null || !activeBuildingBlueprint.equals(Settings.instance.getActiveStructure()))
         {
             activeBuildingBlueprint = Settings.instance.getActiveStructure();
-            AxisAlignedBB activeBuildingBB = getBlueprintBoundingBoxes(activeBuildingBlueprint, Settings.instance.getPosition());
-            activeBuildingBB = activeBuildingBB.inflate(1);
-            // Update the building cache by adding buildings that are near the active building and removing buildings that are no longer near
-            for (final IBuildingView buildingView : colony.getBuildings())
-            {
-                if (MinecoloniesAPIProxy.getInstance().getConfig().getClient().neighborbuildingrendering.get())
-                {
-                    if (buildingView instanceof PostBox.View || buildingView instanceof EmptyView)
-                    {
-                        continue;
-                    }
-                    final BlockPos currentPosition = buildingView.getPosition();
-
-                    // Keep already cached buildings in the cache if they are still near the active building. Cached buildings
-                    // will be rendered on this frame.
-                    if (blueprintCache.containsKey(currentPosition))
-                    {
-                        Tuple<Blueprint, AxisAlignedBB> cachedBuildingData = blueprintCache.get(currentPosition);
-                        assert cachedBuildingData.getB() != null;
-                        if (activeBuildingBB.inflate(PREVIEW_RANGE).intersects(cachedBuildingData.getB()))
-                        {
-                            newCache.put(currentPosition, cachedBuildingData);
-                            continue;
-                        }
-                    }
-
-                    // Get the structure name and MD5 hash of the building
-                    final TileEntity tile = world.getBlockEntity(buildingView.getID());
-                    String schematicName = buildingView.getSchematicName();
-                    if (tile instanceof IBlueprintDataProvider)
-                    {
-                        if (!((IBlueprintDataProvider) tile).getSchematicName().isEmpty())
-                        {
-                            schematicName = ((IBlueprintDataProvider) tile).getSchematicName().replaceAll("\\d$", "");
-                        }
-                    }
-                    final StructureName sn = new StructureName(Structures.SCHEMATICS_PREFIX,
-                            buildingView.getStyle(),
-                            schematicName + buildingView.getBuildingMaxLevel());
-                    final String structureName = sn.toString();
-                    final String md5 = Structures.getMD5(structureName);
-
-                    // Attempt to retrieve the current building's structure handler from the cache, otherwise create a new
-                    // one and update the cache
-                    final IStructureHandler wrapper;
-                    if (structureHandlerCache.containsKey(buildingView.getID()))
-                    {
-                        wrapper = structureHandlerCache.get(buildingView.getID());
-                    }
-                    else
-                    {
-                        wrapper = new LoadOnlyStructureHandler(world, buildingView.getID(), structureName, new PlacementSettings(), true);
-                        structureHandlerCache.put(buildingView.getID(), wrapper);
-                    }
-
-                    // Validate the structure handler's blueprint. If the data is invalid, request the correct data from the
-                    // server and skip rendering for this building for this frame.
-                    if (!wrapper.hasBluePrint() || !wrapper.isCorrectMD5(md5))
-                    {
-                        structureHandlerCache.remove(buildingView.getID());
-                        if (alreadyRequestedStructures.contains(structureName))
-                        {
-                            continue;
-                        }
-                        alreadyRequestedStructures.add(structureName);
-
-                        Log.getLogger().error("Couldn't find schematic: " + structureName + " requesting to server if possible.");
-                        if (ServerLifecycleHooks.getCurrentServer() == null)
-                        {
-                            Network.getNetwork().sendToServer(new SchematicRequestMessage(structureName));
-                        }
-                        continue;
-                    }
-
-                    // Calculate the axis-aligned bounding box's starting and ending position after applying rotation and
-                    // mirroring to this building
-                    final Blueprint blueprint = wrapper.getBluePrint();
-                    final Mirror mirror = buildingView.isMirrored() ? Mirror.FRONT_BACK : Mirror.NONE;
-                    blueprint.rotateWithMirror(BlockPosUtil.getRotationFromRotations(buildingView.getRotation()), mirror, world);
-                    final AxisAlignedBB currentBuildingBB = getBlueprintBoundingBoxes(blueprint, currentPosition);
-
-                    blueprint.setRenderSource(buildingView.getID());
-
-                    // If the current building is near the active building, add it to the cache. Cached buildings will
-                    // be rendered on this frame.
-                    if (activeBuildingBB.inflate(PREVIEW_RANGE).intersects(currentBuildingBB))
-                    {
-                        if (buildingView.getBuildingLevel() < buildingView.getBuildingMaxLevel())
-                        {
-                            newCache.put(currentPosition, new Tuple<>(blueprint, currentBuildingBB));
-                        }
-                        else
-                        {
-                            newCache.put(currentPosition, new Tuple<>(null, currentBuildingBB));
-                        }
-                    }
-                }
-            }
-            blueprintCache = newCache;
+            updateBlueprintCache(colony, world);
         }
 
         // Renders all structures and bounding boxes in the blueprint cache
