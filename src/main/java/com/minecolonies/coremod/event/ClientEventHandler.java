@@ -112,6 +112,21 @@ public class ClientEventHandler
     private static Blueprint activeBuildingBlueprint = null;
 
     /**
+     * Position of the build preview in the previous frame
+     */
+    private static BlockPos buildPreviewPos = null;
+
+    /**
+     * Rotation of the build preview in the previous frame
+     */
+    private static int buildPreviewRotation = 0;
+
+    /**
+     * Mirror of the build preview in the previous frame
+     */
+    private static Mirror buildPreviewMirror = null;
+
+    /**
      * The cached map of blueprints of nearby buildings that are rendered.
      */
     private static Map<BlockPos, Tuple<Blueprint, AxisAlignedBB>> blueprintCache = new HashMap<>();
@@ -505,6 +520,16 @@ public class ClientEventHandler
         return new AxisAlignedBB(boxStartPos, boxEndPos);
     }
 
+    private static boolean buildToolPreviewHasChanged()
+    {
+        boolean previewBlueprintIsNullOrHasChanged = Settings.instance.getActiveStructure() != null &&
+                !Settings.instance.getActiveStructure().equals(activeBuildingBlueprint);
+        boolean previewHasMoved = !Settings.instance.getPosition().equals(buildPreviewPos);
+        boolean previewHasBeenRotated = Settings.instance.getRotation() != buildPreviewRotation;
+        boolean previewHasBeenMirrored = !Settings.instance.getMirror().equals(buildPreviewMirror);
+        return previewBlueprintIsNullOrHasChanged || previewHasMoved || previewHasBeenRotated || previewHasBeenMirrored;
+    }
+
     /**
      * Renders building previews and bounding boxes into the client
      *
@@ -527,9 +552,12 @@ public class ClientEventHandler
 
         // todo: The building cache shouldn't need to be updated unless the active building's position/rotation changes
         // fixme: active building blueprint is considered the same even if the position and rotation/mirroring are not the same
-        if (activeBuildingBlueprint == null || !activeBuildingBlueprint.equals(Settings.instance.getActiveStructure()))
+        if (buildToolPreviewHasChanged())
         {
             activeBuildingBlueprint = Settings.instance.getActiveStructure();
+            buildPreviewPos = Settings.instance.getPosition();
+            buildPreviewRotation = Settings.instance.getRotation();
+            buildPreviewMirror = Settings.instance.getMirror();
             updateBlueprintCache(colony, world);
         }
 
