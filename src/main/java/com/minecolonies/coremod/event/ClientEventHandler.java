@@ -2,13 +2,11 @@ package com.minecolonies.coremod.event;
 
 import com.google.common.collect.ImmutableMap;
 import com.ldtteam.blockout.Log;
-import com.ldtteam.blockout.Render;
 import com.ldtteam.structures.blueprints.v1.Blueprint;
 import com.ldtteam.structures.client.StructureClientHandler;
 import com.ldtteam.structures.helpers.Settings;
 import com.ldtteam.structurize.Network;
 import com.ldtteam.structurize.blocks.interfaces.IBlueprintDataProvider;
-import com.ldtteam.structurize.event.ClientEventSubscriber;
 import com.ldtteam.structurize.management.StructureName;
 import com.ldtteam.structurize.management.Structures;
 import com.ldtteam.structurize.network.messages.SchematicRequestMessage;
@@ -54,7 +52,6 @@ import net.minecraft.item.Item;
 import net.minecraft.item.ItemStack;
 import net.minecraft.nbt.CompoundNBT;
 import net.minecraft.tileentity.TileEntity;
-import net.minecraft.util.Direction;
 import net.minecraft.util.Mirror;
 import net.minecraft.util.ResourceLocation;
 import net.minecraft.util.math.AxisAlignedBB;
@@ -70,7 +67,6 @@ import net.minecraftforge.eventbus.api.EventPriority;
 import net.minecraftforge.eventbus.api.SubscribeEvent;
 import net.minecraftforge.fml.ModList;
 import net.minecraftforge.fml.server.ServerLifecycleHooks;
-import org.antlr.v4.runtime.misc.Triple;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -408,7 +404,7 @@ public class ClientEventHandler
         activeBuildingBB = activeBuildingBB.inflate(1);
         // todo: optimise: This causes a big lag spike for the client when they open the build tool for the first time
         //  after joining a world because it's loading something (pretty sure it's from loading all the colony's
-        //  building's blueprints). If we could distribute the work load over several frames, it should fix the spike.
+        //  building's blueprints at once). If we could distribute the work load over several frames, it should fix the spike.
         // Update the building cache by adding buildings that are near the active building and removing buildings that are no longer near
         for (final IBuildingView buildingView : colony.getBuildings())
         {
@@ -420,8 +416,7 @@ public class ClientEventHandler
                 }
                 final BlockPos currentPosition = buildingView.getPosition();
 
-                // Keep already cached buildings in the cache if they are still near the active building. Cached buildings
-                // will be rendered on this frame.
+                // Keep already cached buildings in the cache if they are still near the active building
                 if (blueprintCache.containsKey(currentPosition))
                 {
                     Tuple<Blueprint, AxisAlignedBB> cachedBuildingData = blueprintCache.get(currentPosition);
@@ -450,7 +445,7 @@ public class ClientEventHandler
                 final String md5 = Structures.getMD5(structureName);
 
                 // Attempt to retrieve the current building's structure handler from the cache, otherwise create a new
-                // one and update the cache
+                // one and add it to the cache
                 final IStructureHandler wrapper;
                 boolean wrapperIsNotFromCache;
                 if (structureHandlerCache.containsKey(buildingView.getID()))
@@ -495,8 +490,7 @@ public class ClientEventHandler
 
                 blueprint.setRenderSource(buildingView.getID());
 
-                // If the current building is near the active building, add it to the cache. Cached buildings will
-                // be rendered on this frame.
+                // If the current building is near the active building, add it to the cache to render it during this frame
                 if (activeBuildingBB.inflate(PREVIEW_RANGE).intersects(currentBuildingBB))
                 {
                     if (buildingView.getBuildingLevel() < buildingView.getBuildingMaxLevel())
@@ -528,6 +522,9 @@ public class ClientEventHandler
         return new AxisAlignedBB(boxStartPos, boxEndPos);
     }
 
+    /**
+     * @return True if the build tool's preview has been moved, mirrored, rotated, or its blueprint has changed
+     */
     private static boolean buildToolPreviewHasChanged()
     {
         boolean previewBlueprintIsNullOrHasChanged = Settings.instance.getActiveStructure() != null &&
