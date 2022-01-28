@@ -127,7 +127,7 @@ public class ClientEventHandler
     private static Mirror buildPreviewMirror = null;
 
     /**
-     * The cached map of blueprints of nearby buildings that are rendered.
+     * Cached map of blueprints of nearby buildings that are rendered.
      */
     private static Map<BlockPos, Tuple<Blueprint, AxisAlignedBB>> blueprintCache = new HashMap<>();
 
@@ -395,7 +395,11 @@ public class ClientEventHandler
         }
     }
 
-    // todo: javadoc comment
+    /**
+     * Updates the blueprint cache by adding/removing buildings depending on their distance from the active building
+     * @param colony The colony which contains the buildings in the blueprint cache
+     * @param world The world in which to render
+     */
     private static void updateBlueprintCache(final IColonyView colony, final ClientWorld world)
     {
         final Map<BlockPos, Tuple<Blueprint, AxisAlignedBB>> newCache = new HashMap<>();
@@ -509,16 +513,15 @@ public class ClientEventHandler
         blueprintCache = newCache;
     }
 
-    // todo: fix javadoc comment for box start pos (lower south-west corner? i.e.: minX, minY, minZ? or does it matter?)
     /**
      * Creates an axis-aligned bounding box that encompasses the blueprint
      * @param blueprint The blueprint to create an AABB for
-     * @param boxStartPos The (?) corner of the blueprint
+     * @param structurePos The position of the structure in the world
      * @return AABB encompassing the blueprint
      */
-    private static AxisAlignedBB getBlueprintBoundingBoxes(final Blueprint blueprint, BlockPos boxStartPos)
+    private static AxisAlignedBB getBlueprintBoundingBoxes(final Blueprint blueprint, BlockPos structurePos)
     {
-        boxStartPos = boxStartPos.subtract(blueprint.getPrimaryBlockOffset());
+        BlockPos boxStartPos = structurePos.subtract(blueprint.getPrimaryBlockOffset());
         final BlockPos size = new BlockPos(blueprint.getSizeX(), blueprint.getSizeY(), blueprint.getSizeZ());
         final BlockPos boxEndPos = boxStartPos.offset(size).subtract(new BlockPos(1, 1, 1));
 
@@ -555,8 +558,6 @@ public class ClientEventHandler
             return;
         }
 
-        // todo: The building cache shouldn't need to be updated unless the active building's position/rotation changes
-        // fixme: active building blueprint is considered the same even if the position and rotation/mirroring are not the same
         if (buildToolPreviewHasChanged())
         {
             activeBuildingBlueprint = Settings.instance.getActiveStructure();
