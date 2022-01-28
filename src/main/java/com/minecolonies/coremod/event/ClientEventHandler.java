@@ -448,14 +448,17 @@ public class ClientEventHandler
                 // Attempt to retrieve the current building's structure handler from the cache, otherwise create a new
                 // one and update the cache
                 final IStructureHandler wrapper;
+                boolean wrapperIsNotFromCache;
                 if (structureHandlerCache.containsKey(buildingView.getID()))
                 {
                     wrapper = structureHandlerCache.get(buildingView.getID());
+                    wrapperIsNotFromCache = false;
                 }
                 else
                 {
                     wrapper = new LoadOnlyStructureHandler(world, buildingView.getID(), structureName, new PlacementSettings(), true);
                     structureHandlerCache.put(buildingView.getID(), wrapper);
+                    wrapperIsNotFromCache = true;
                 }
 
                 // Validate the structure handler's blueprint. If the data is invalid, request the correct data from the
@@ -477,11 +480,13 @@ public class ClientEventHandler
                     continue;
                 }
 
-                // Calculate the axis-aligned bounding box's starting and ending position after applying rotation and
-                // mirroring to this building
                 final Blueprint blueprint = wrapper.getBluePrint();
-                final Mirror mirror = buildingView.isMirrored() ? Mirror.FRONT_BACK : Mirror.NONE;
-                blueprint.rotateWithMirror(BlockPosUtil.getRotationFromRotations(buildingView.getRotation()), mirror, world);
+                // Only apply mirroring and rotation when the blueprint is loaded for the first time
+                if (wrapperIsNotFromCache)
+                {
+                    final Mirror mirror = buildingView.isMirrored() ? Mirror.FRONT_BACK : Mirror.NONE;
+                    blueprint.rotateWithMirror(BlockPosUtil.getRotationFromRotations(buildingView.getRotation()), mirror, world);
+                }
                 final AxisAlignedBB currentBuildingBB = getBlueprintBoundingBoxes(blueprint, currentPosition);
 
                 blueprint.setRenderSource(buildingView.getID());
