@@ -410,7 +410,7 @@ public class ClientEventHandler
         {
             if (MinecoloniesAPIProxy.getInstance().getConfig().getClient().neighborbuildingrendering.get())
             {
-                if (buildingView instanceof PostBox.View || buildingView instanceof EmptyView)
+                if (buildingView.getBuildingType() == ModBuildings.postBox || buildingView.getBuildingType() == ModBuildings.stash)
                 {
                     continue;
                 }
